@@ -17,15 +17,13 @@ from bravado.http_client import HttpClient
 from bravado.http_future import FutureAdapter
 from bravado.http_future import HttpFuture
 
-
 if getattr(typing, 'TYPE_CHECKING', False):
     T = typing.TypeVar('T')
-
 
 log = logging.getLogger(__name__)
 
 
-class Authenticator(object):
+class Authenticator(requests.auth.AuthBase):
     """Authenticates requests.
 
     :param host: Host to authenticate for.
@@ -50,7 +48,7 @@ class Authenticator(object):
         return self.host == split.netloc
 
     def apply(self, request):
-        # type: (requests.Request) -> requests.Request
+        # type: (requests.PreparedRequest) -> requests.PreparedRequest
         """Apply authentication to a request.
 
         :param request: Request to add authentication information to.
@@ -58,8 +56,18 @@ class Authenticator(object):
         raise NotImplementedError(u"%s: Method not implemented",
                                   self.__class__.__name__)
 
+    def __call__(self, r):
+        # type: (requests.PreparedRequest) -> requests.PreparedRequest
+        if self.matches(r.url):
+            return self.apply(r)
+
+        else:
+            return r
+
 
 # noinspection PyDocstring
+
+
 class ApiKeyAuthenticator(Authenticator):
     """?api_key authenticator.
 
@@ -72,11 +80,11 @@ class ApiKeyAuthenticator(Authenticator):
     """
 
     def __init__(
-        self,
-        host,  # type: str
-        api_key,  # type: typing.Text
-        param_name=u'api_key',  # type: typing.Text
-        param_in=u'query',  # type: typing.Text
+            self,
+            host,  # type: str
+            api_key,  # type: typing.Text
+            param_name=u'api_key',  # type: typing.Text
+            param_in=u'query',  # type: typing.Text
     ):
         # type: (...) -> None
         super(ApiKeyAuthenticator, self).__init__(host)
@@ -84,13 +92,14 @@ class ApiKeyAuthenticator(Authenticator):
         self.param_in = param_in
         self.api_key = api_key
 
-    def apply(self, request):
-        # type: (requests.Request) -> requests.Request
+    def apply(self, p_request):
+        # type: (requests.PreparedRequest) -> requests.PreparedRequest
         if self.param_in == 'header':
-            request.headers.setdefault(self.param_name, self.api_key)
+            p_request.headers.setdefault(self.param_name, self.api_key)
         else:
-            request.params[self.param_name] = self.api_key
-        return request
+            p_request.prepare_url(p_request.url, {self.param_name: self.api_key})
+
+        return p_request
 
 
 class BasicAuthenticator(Authenticator):
@@ -102,20 +111,18 @@ class BasicAuthenticator(Authenticator):
     """
 
     def __init__(
-        self,
-        host,  # type: str
-        username,  # type: typing.Union[bytes, str]
-        password,  # type: typing.Union[bytes, str]
+            self,
+            host,  # type: str
+            username,  # type: typing.Union[bytes, str]
+            password,  # type: typing.Union[bytes, str]
     ):
         # type: (...) -> None
         super(BasicAuthenticator, self).__init__(host)
-        self.auth = requests.auth.HTTPBasicAuth(username, password)
+        self.basic_auth = requests.auth.HTTPBasicAuth(username, password)
 
-    def apply(self, request):
-        # type: (requests.Request) -> requests.Request
-        request.auth = self.auth
-
-        return request
+    def apply(self, p_request):
+        # type: (requests.PreparedRequest) -> requests.PreparedRequest
+        return self.basic_auth(p_request)
 
 
 class RequestsResponseAdapter(IncomingResponse):
@@ -169,10 +176,10 @@ class RequestsFutureAdapter(FutureAdapter):
     connection_errors = (requests.exceptions.ConnectionError,)  # type: typing.Tuple[typing.Type[Exception], ...]
 
     def __init__(
-        self,
-        session,  # type: requests.Session
-        request,  # type: requests.Request
-        misc_options,  # type: typing.Mapping[str, typing.Any]
+            self,
+            session,  # type: requests.Session
+            request,  # type: requests.Request
+            misc_options,  # type: typing.Mapping[str, typing.Any]
     ):
         # type: (...) -> None
         """Kicks API call for Requests client
@@ -188,8 +195,8 @@ class RequestsFutureAdapter(FutureAdapter):
         self.misc_options = misc_options
 
     def build_timeout(
-        self,
-        result_timeout,  # type: typing.Optional[float]
+            self,
+            result_timeout,  # type: typing.Optional[float]
     ):
         # type: (...) -> typing.Union[typing.Optional[float], typing.Tuple[typing.Optional[float], typing.Optional[float]]]  # noqa
         """
@@ -281,11 +288,11 @@ class RequestsClient(HttpClient):
     """
 
     def __init__(
-        self,
-        ssl_verify=True,  # type: bool
-        ssl_cert=None,  # type:  typing.Any
-        future_adapter_class=RequestsFutureAdapter,  # type: typing.Type[RequestsFutureAdapter]
-        response_adapter_class=RequestsResponseAdapter,  # type: typing.Type[RequestsResponseAdapter]
+            self,
+            ssl_verify=True,  # type: bool
+            ssl_cert=None,  # type:  typing.Any
+            future_adapter_class=RequestsFutureAdapter,  # type: typing.Type[RequestsFutureAdapter]
+            response_adapter_class=RequestsResponseAdapter,  # type: typing.Type[RequestsResponseAdapter]
     ):
         # type: (...) -> None
         """
@@ -342,8 +349,8 @@ class RequestsClient(HttpClient):
         )
 
     def separate_params(
-        self,
-        request_params,  # type: typing.MutableMapping[str, typing.Any]
+            self,
+            request_params,  # type: typing.MutableMapping[str, typing.Any]
     ):
         # type: (...) -> typing.Tuple[typing.Mapping[str, typing.Any], typing.Mapping[str, typing.Any]]
         """Splits the passed in dict of request_params into two buckets.
@@ -374,10 +381,10 @@ class RequestsClient(HttpClient):
         return sanitized_params, misc_options
 
     def request(
-        self,
-        request_params,  # type: typing.MutableMapping[str, typing.Any]
-        operation=None,  # type: typing.Optional[Operation]
-        request_config=None,  # type: typing.Optional[RequestConfig]
+            self,
+            request_params,  # type: typing.MutableMapping[str, typing.Any]
+            operation=None,  # type: typing.Optional[Operation]
+            request_config=None,  # type: typing.Optional[RequestConfig]
     ):
         # type: (...) -> HttpFuture[T]
         """
@@ -396,7 +403,7 @@ class RequestsClient(HttpClient):
 
         requests_future = self.future_adapter_class(
             self.session,
-            self.authenticated_request(sanitized_params),
+            requests.Request(**request_params),
             misc_options,
         )
 
@@ -408,40 +415,25 @@ class RequestsClient(HttpClient):
         )
 
     def set_basic_auth(
-        self,
-        host,  # type: str
-        username,  # type: typing.Union[bytes, str]
-        password,  # type: typing.Union[bytes, str]
+            self,
+            host,  # type: str
+            username,  # type: typing.Union[bytes, str]
+            password,  # type: typing.Union[bytes, str]
     ):
         # type: (...) -> None
-        self.authenticator = BasicAuthenticator(
+        self.session.auth = BasicAuthenticator(
             host=host,
             username=username,
             password=password,
         )
 
     def set_api_key(
-        self,
-        host,  # type: str
-        api_key,  # type: typing.Text
-        param_name=u'api_key',  # type: typing.Text
-        param_in=u'query',  # type: typing.Text
+            self,
+            host,  # type: str
+            api_key,  # type: typing.Text
+            param_name=u'api_key',  # type: typing.Text
+            param_in=u'query',  # type: typing.Text
     ):
         # type: (...) -> None
-        self.authenticator = ApiKeyAuthenticator(
-            host=host,
-            api_key=api_key,
-            param_name=param_name,
-            param_in=param_in,
-        )
 
-    def authenticated_request(self, request_params):
-        # type: (typing.Mapping[str, typing.Any]) -> requests.Request
-        return self.apply_authentication(requests.Request(**request_params))
-
-    def apply_authentication(self, request):
-        # type: (requests.Request) -> requests.Request
-        if self.authenticator and self.authenticator.matches(request.url):
-            return self.authenticator.apply(request)
-
-        return request
+        self.session.auth = ApiKeyAuthenticator(host=host, api_key=api_key, param_name=param_name, param_in=param_in)
