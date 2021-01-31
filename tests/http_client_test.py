@@ -179,6 +179,51 @@ class RequestsClientTestCase(unittest.TestCase):
         self.assertTrue(
             httpretty.last_request().headers.get('Authorization') is None)
 
+    @httpretty.activate
+    def test_auth_session_based(self):
+        class AuthenticatedSessionSkeleton(requests.Session):
+            token = None
+
+            def authenticate(self):
+                # Auth magic results in token
+                self.token = "secure_token"
+
+            def prepare_request(self, request):
+                # Auth specific credentials / token management. Including fetch / refresh
+                if self.token:
+                    request.headers["Authorization"] = self.token
+
+                return super(AuthenticatedSessionSkeleton, self).prepare_request(
+                    request
+                )
+
+        httpretty.register_uri(
+            httpretty.GET, "http://hackerz.py",
+            body='expected')
+
+        client = RequestsClient()
+        client.session = AuthenticatedSessionSkeleton()
+
+        params = self._default_params()
+        params['params'] = {'foo': 'bar'}
+        params['url'] = 'http://hackerz.py'
+
+        _ = typing.cast(IncomingResponse, client.request(params).result())
+
+        self.assertTrue(
+            httpretty.last_request().headers.get('Authorization') is None)
+
+        client = RequestsClient()
+        client.session = AuthenticatedSessionSkeleton()
+        client.session.authenticate()
+
+        _ = typing.cast(IncomingResponse, client.request(params).result())
+
+        print(httpretty.last_request().headers)
+
+        self.assertTrue(
+            httpretty.last_request().headers.get('Authorization') == client.session.token)
+
 
 class AuthenticatorTestCase(unittest.TestCase):
 
